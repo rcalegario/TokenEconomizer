@@ -1,0 +1,95 @@
+name: Sync upstream
+
+# Fast-forwards `main` to upstream and opens a PR `main` -> `custom` so conflicts
+# are resolved there. `main` must stay an untouched mirror of upstream; do all
+# work on `custom` (the default branch, which is where this workflow lives).
+#
+# The daily schedule follows the latest upstream release. A manual run can pick
+# `source: main` to follow upstream's main branch instead; a later scheduled run
+# is then a no-op until a release passes it.
+#
+# Requires the SYNC_TOKEN secret (PAT with `repo` + `workflow` scopes): the
+# default GITHUB_TOKEN cannot push commits that modify .github/workflows/.
+
+on:
+  schedule:
+    - cron: "23 9 * * *"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "What to sync main to"
+        type: choice
+        options: [release, main]
+        default: release
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: microsoft/TokenEconomizer
+  GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+  SOURCE: ${{ inputs.source || 'release' }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Resolve the upstream target
+        id: target
+        run: |
+          if [ "$SOURCE" = "main" ]; then
+            git fetch "https://github.com/$UPSTREAM.git" main
+            sha=$(git rev-parse FETCH_HEAD)
+            {
+              echo "ref=$sha"
+              echo "label=main@${sha:0:7}"
+              echo "url=https://github.com/$UPSTREAM/commit/$sha"
+            } >> "$GITHUB_OUTPUT"
+          else
+            tag=$(gh release view -R "$UPSTREAM" --json tagName -q .tagName)
+            git fetch "https://github.com/$UPSTREAM.git" "refs/tags/$tag:refs/tags/$tag"
+            {
+              echo "ref=$tag"
+              echo "label=$tag"
+              echo "url=https://github.com/$UPSTREAM/releases/tag/$tag"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fast-forward main to the target
+        env:
+          REF: ${{ steps.target.outputs.ref }}
+        run: |
+          if git merge-base --is-ancestor "$REF" main; then
+            echo "main already contains $REF"
+            exit 0
+          fi
+          git merge --ff-only "$REF"
+          git push origin main
+
+      - name: Open or update PR main -> custom
+        env:
+          LABEL: ${{ steps.target.outputs.label }}
+          URL: ${{ steps.target.outputs.url }}
+        run: |
+          if [ "$(git rev-list --count origin/custom..main)" = "0" ]; then
+            echo "custom already contains main; no PR needed"
+            exit 0
+          fi
+          title="chore: sync upstream $LABEL"
+          body="Upstream [$LABEL]($URL). Resolve conflicts here."
+          existing=$(gh pr list --base custom --head main --state open --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+          else
+            gh pr create --base custom --head main --title "$title" --body "$body"
+          fi
