@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../home/catalog/project.schema.json
+id: tokeneconomizer
+question: Como deixo meus agentes de código (Claude Code, Codex) mais baratos nos repositórios onde trabalho sempre, sem mudar o agente?
+intent: experimento
+domain: ai
+shape: standalone
+origin: fork
+stack:
+  plugin: python
+  pi-extension: typescript
+runs_on: [mac]
+entities: [session, micro_skill, tool, turn, ledger]
+features: [micro-skills, poda-de-ferramentas, guarda-de-loop, custo-por-sessao, plugin-multi-agente]
+notes: |
+  Fork de microsoft/TokenEconomizer: main espelha o upstream e o trabalho próprio fica na branch custom.
+  Plugin local dos agentes; o que aprende fica em ~/.tokeneconomizer.
